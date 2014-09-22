@@ -1,0 +1,9 @@
+Asana Burndown Calculator
+==========================
+
+This is a set of scripts that use the Asana API to calculate task counts and
+burndown.
+
+## Install
+
+    $ pip install -r requirements.txt
