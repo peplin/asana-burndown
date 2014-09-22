@@ -7,3 +7,13 @@ burndown.
 ## Install
 
     $ pip install -r requirements.txt
+
+## Running
+
+So far there's just a script to grab the open / closed task counts for projects
+in a certain team.
+
+    $ export ASANA_API_KEY="xxx"
+    $ export ASANA_WORKSPACE = "getprotean.com"
+    $ export ASANA_TEAM = "Engineering"
+    $ python count.py

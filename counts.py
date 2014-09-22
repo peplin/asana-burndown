@@ -5,8 +5,8 @@ import os
 from prettyprint import pp
 from asana import asana
 
-WORKSPACE_NAME = "getprotean.com"
-ENGINEERING_TEAM = "Engineering"
+WORKSPACE_NAME = os.environ.get("ASANA_WORKSPACE")
+TEAM = os.environ.get("ASANA_TEAM")
 
 api = asana.AsanaAPI(os.environ.get('ASANA_API_KEY'), debug=False)
 
@@ -18,7 +18,7 @@ for workspace_attrs in api.list_workspaces():
 projects = {}
 for project_attrs in api.list_projects(workspace['id'], include_archived=False):
     project = api.get_project(project_attrs['id'])
-    if project['team']['name'] == ENGINEERING_TEAM:
+    if project['team']['name'] == TEAM:
         projects[project['id']] = project
 
 for project in projects.values():
