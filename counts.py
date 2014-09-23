@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import division, print_function
 
 import os
 
@@ -20,6 +21,7 @@ for project_attrs in api.list_projects(workspace['id'], include_archived=False):
     project = api.get_project(project_attrs['id'])
     if project['team']['name'] == TEAM:
         projects[project['id']] = project
+        break
 
 for project in projects.values():
     tasks = api.get_project_tasks(project['id'])
@@ -28,9 +30,17 @@ for project in projects.values():
         task_id = task_attrs['id']
         project['tasks'][task_id] = api.get_task(task_id)
 
+total_tasks = 0
+total_open_tasks = 0
 for project in projects.values():
     tasks = project.get('tasks', {}).values()
+    total_tasks += len(tasks)
     open_tasks = [task for task in tasks if not task['completed']]
+    total_open_tasks += len(open_tasks)
     closed_tasks = [task for task in tasks if task['completed']]
     print("{:<32} - Open: {:d} Closed: {:d}".format(
         project['name'][:32], len(open_tasks), len(closed_tasks)))
+
+print("Total Tasks: %d" % total_tasks)
+print("Total Open Tasks: %d" % total_open_tasks)
+print("Completion: %f%%" % ((total_tasks - total_open_tasks) / total_tasks))
