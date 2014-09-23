@@ -9,7 +9,7 @@ from asana import asana
 WORKSPACE_NAME = os.environ.get("ASANA_WORKSPACE")
 TEAM = os.environ.get("ASANA_TEAM")
 
-api = asana.AsanaAPI(os.environ.get('ASANA_API_KEY'), debug=False)
+api = asana.AsanaAPI(os.environ.get('ASANA_API_KEY'), debug=True)
 
 def load_workspace():
     workspace = None
