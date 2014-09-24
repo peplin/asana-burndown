@@ -2,6 +2,10 @@
 from __future__ import division, print_function
 
 import os
+from datetime import datetime, timedelta, date
+import dateutil.parser
+import collections
+import pytz
 
 from prettyprint import pp
 from asana import asana
@@ -51,6 +55,36 @@ def count_tasks(tasks):
         print("{:<32} - Open: {:d} Closed: {:d}".format(
             project['name'][:32], len(open_tasks), len(closed_tasks)))
     return total_tasks, total_open_tasks
+
+def filter_tasks(tasks, before_date):
+    for task in tasks:
+        task_creation_date = dateutil.parser.parse(task['created_at']).date()
+        if task_creation_date <= before_date:
+            yield task
+
+def calculate_burnup(since_days_ago=14):
+    workspace = load_workspace();
+    projects = load_projects(workspace, TEAM)
+    for project in projects.values():
+        project['tasks'] = load_tasks_for_project(project)
+
+    now = datetime.utcnow()
+    now = pytz.UTC.localize(now)
+    dates = [(now - timedelta(days=x)).date() for x in range(since_days_ago)]
+    counts = collections.defaultdict(dict)
+    for date in dates:
+        counts[date]['total'] = 0
+        counts[date]['closed'] = 0
+        for project in projects.values():
+            # Make sure to create a list here, otherwise the generator will be
+            # done when you call matching_tasks again to get closed counts
+            matching_tasks = list(filter_tasks(project.get('tasks', {}).values(), date))
+            counts[date]['total'] += len(matching_tasks)
+            counts[date]['closed'] += len([task for task in matching_tasks if task['completed']])
+
+    for date in sorted(counts.keys()):
+        print("%s,%d,%d" % (date.isoformat(), counts[date]['total'], counts[date]['closed']))
+    return counts
 
 if __name__ == '__main__':
     total_tasks, total_open_tasks = count_tasks()
