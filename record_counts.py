@@ -18,4 +18,4 @@ def upload_today():
     upload_historical(0)
 
 if __name__ == '__main__':
-    upload_historical(7*16)
+    upload_today()
