@@ -12,31 +12,42 @@ from asana import asana
 WORKSPACE_NAME = os.environ.get("ASANA_WORKSPACE")
 TEAM = os.environ.get("ASANA_TEAM")
 
-api = asana.AsanaAPI(os.environ.get('ASANA_API_KEY'), debug=False)
+api = asana.AsanaAPI(os.environ.get('ASANA_API_KEY'), debug=True)
 
+WORKSPACE = None
 def load_workspace():
-    workspace = None
-    for workspace_attrs in api.list_workspaces():
-        if workspace_attrs['name'] == WORKSPACE_NAME:
-            workspace = workspace_attrs
-    return workspace
+    global WORKSPACE
+    if WORKSPACE is None:
+        for workspace_attrs in api.list_workspaces():
+            if workspace_attrs['name'] == WORKSPACE_NAME:
+                WORKSPACE = workspace_attrs
+    return WORKSPACE
 
+PROJECTS = None
 def list_projects(workspace, include_archived=False, filters=None):
-    if include_archived:
-        include_archived = "true"
-    else:
-        include_archived = "false"
-    target = "projects?archived=%s" % (include_archived)
-    if workspace:
-        target = "workspaces/%d/" % (workspace) + target
-    if filters:
-        target += "&opt_fields=%s" % build_filter_for_fields(filters)
-    return api._asana(target)
+    global PROJECTS
+    if PROJECTS is None:
+        if include_archived:
+            include_archived = "true"
+        else:
+            include_archived = "false"
+        target = "projects?archived=%s" % (include_archived)
+        if workspace:
+            target = "workspaces/%d/" % (workspace) + target
+        if filters:
+            target += "&opt_fields=%s" % build_filter_for_fields(filters)
+        PROJECTS = api._asana(target)
+    return PROJECTS
 
+TEAMS = None
 def load_team(workspace, team_name=None):
-    for team in api.organization_teams(workspace['id']):
-        if team['name'] == team_name:
-            return team
+    global TEAMS
+    if TEAMS is None:
+        TEAMS = {}
+        teams = api.organization_teams(workspace['id'])
+        for team in teams:
+            TEAMS[team['name']] = team
+    return TEAMS[team_name]
 
 def load_projects(workspace, team_name=None):
     projects = []
@@ -48,14 +59,16 @@ def load_projects(workspace, team_name=None):
     return projects
 
 def get_project_tasks(project, filters=None, include_archived=False):
-    if include_archived:
-        include_archived = "true"
-    else:
-        include_archived = "false"
-    target = 'projects/%d/tasks?include_archived=%s'
-    if filters:
-        target += "&opt_fields=%s" % build_filter_for_fields(filters)
-    return api._asana(target % (project['id'], include_archived))
+    if 'tasks' not in project:
+        if include_archived:
+            include_archived = "true"
+        else:
+            include_archived = "false"
+        target = 'projects/%d/tasks?include_archived=%s'
+        if filters:
+            target += "&opt_fields=%s" % build_filter_for_fields(filters)
+        project['tasks'] = api._asana(target % (project['id'], include_archived))
+    return project['tasks']
 
 def load_tasks_for_project(project, full=False):
     if full:
@@ -69,21 +82,6 @@ def load_tasks_for_project(project, full=False):
         return get_project_tasks(project,
                 filters=['completed', 'completed_at', 'created_at'])
 
-def count_tasks(tasks):
-    projects = load_enriched_projects()
-
-    total_tasks = 0
-    total_open_tasks = 0
-    for project in projects:
-        tasks = project['tasks']
-        total_tasks += len(tasks)
-        open_tasks = [task for task in tasks if not task['completed']]
-        total_open_tasks += len(open_tasks)
-        closed_tasks = [task for task in tasks if task['completed']]
-        print("{:<32} - Open: {:d} Closed: {:d}".format(
-            project['name'][:32], len(open_tasks), len(closed_tasks)))
-    return total_tasks, total_open_tasks
-
 def filter_tasks(tasks, before_date=None, after_date=None):
     for task in tasks:
         task_creation_date = dateutil.parser.parse(task['created_at']).date()
@@ -91,15 +89,11 @@ def filter_tasks(tasks, before_date=None, after_date=None):
                 and (after_date is None or task_creation_date >= after_date)):
             yield task
 
-def load_enriched_projects():
+def calculate_burnup(since_days_ago=14):
     workspace = load_workspace();
     projects = load_projects(workspace, TEAM)
     for project in projects:
         project['tasks'] = load_tasks_for_project(project)
-    return projects
-
-def calculate_burnup(since_days_ago=14):
-    projects = load_enriched_projects()
 
     now = datetime.utcnow()
     now = pytz.UTC.localize(now)
@@ -116,10 +110,15 @@ def calculate_burnup(since_days_ago=14):
             counts[date]['closed'] += len([task for task in matching_tasks if task['completed']])
     return counts
 
+TAGS = None
 def load_tag(workspace, tag_name):
-    for tag in api.get_tags(workspace['id']):
-        if tag['name'] == tag_name:
-            return tag
+    global TAGS
+    if TAGS is None:
+        TAGS = {}
+        tags = api.get_tags(workspace['id'])
+        for tag in tags:
+            TAGS[tag['name']] = tag
+    return TAGS[tag_name]
 
 all_tasks = {}
 def get_task_lazy(task_id):
@@ -132,21 +131,31 @@ def build_filter_for_fields(filters):
     fields = ",".join(fkeys)
     return fields
 
+TAG_TASKS = {}
 def get_tag_tasks(tag, filters=None):
-    target = 'tags/%d/tasks'
-    if filters:
-        target += "?opt_fields=%s" % build_filter_for_fields(filters)
-    return api._asana(target % tag['id'])
+    if tag['name'] not in TAG_TASKS:
+        target = 'tags/%d/tasks'
+        if filters:
+            target += "?opt_fields=%s" % build_filter_for_fields(filters)
+        TAG_TASKS[tag['name']] = api._asana(target % tag['id'])
+    return TAG_TASKS[tag['name']]
 
-def calculate_stats():
+def calculate_stats(on_date=None):
     workspace = load_workspace()
 
-    bugs = []
-    bugs = get_tag_tasks(load_tag(workspace, "Bug"),
-            filters=['completed', 'completed_at', 'created_at'])
+    if on_date:
+        on_date = pytz.UTC.localize(datetime.combine(on_date,
+            datetime.min.time()))
+    else:
+        on_date = datetime.utcnow()
+    week_ago = datetime.combine(on_date - timedelta(days=7),
+            datetime.min.time())
+    week_ago = pytz.UTC.localize(week_ago)
 
-    now = pytz.UTC.localize(datetime.utcnow())
-    week_ago = now - timedelta(days=7)
+    bugs = []
+    bugs = [bug for bug in get_tag_tasks(load_tag(workspace, "Bug"),
+                filters=['completed', 'completed_at', 'created_at'])
+            if dateutil.parser.parse(bug['created_at']) <= on_date]
 
     open_bugs = [bug for bug in bugs if not bug['completed']]
     opened_in_last_week = [bug for bug in bugs
@@ -157,13 +166,13 @@ def calculate_stats():
 
     p1 = [task for task in get_tag_tasks(load_tag(workspace, "P1"),
                 filters=['completed', 'completed_at', 'created_at'])
-            if not task['completed']]
+            if not task['completed'] and dateutil.parser.parse(task['created_at']) <= on_date]
     p2 = [task for task in get_tag_tasks(load_tag(workspace, "P2"),
                 filters=['completed', 'completed_at', 'created_at'])
-            if not task['completed']]
+            if not task['completed'] and dateutil.parser.parse(task['created_at']) <= on_date]
     p3 = [task for task in get_tag_tasks(load_tag(workspace, "P3"),
                 filters=['completed', 'completed_at', 'created_at'])
-            if not task['completed']]
+            if not task['completed'] and dateutil.parser.parse(task['created_at']) <= on_date]
 
     projects = load_projects(workspace, TEAM)
     security_tasks = []
@@ -171,22 +180,24 @@ def calculate_stats():
     quick_sync_tasks = []
     for project in projects:
         if project['name'] == "Security":
-            security_tasks = api.get_project_tasks(project['id'])
+            security_tasks = [task for task in load_tasks_for_project(project)
+                if not task['completed'] and dateutil.parser.parse(task['created_at']) <= on_date]
         elif project['name'] == "OTA Firmware Updates":
-            ota_tasks = api.get_project_tasks(project['id'])
+            ota_tasks = [task for task in load_tasks_for_project(project)
+                if not task['completed'] and dateutil.parser.parse(task['created_at']) <= on_date]
         elif project['name'] == "Quick Sync":
-            quick_sync_tasks = api.get_project_tasks(project['id'])
+            quick_sync_tasks = [task for task in load_tasks_for_project(project)
+                if not task['completed'] and dateutil.parser.parse(task['created_at']) <= on_date]
 
-    print("Open bugs: %d" % len(open_bugs))
-    print("Bugs closed in last 7 days: %d" % len(closed_in_last_week))
-    print("Bugs opened in last 7 days: %d" % len(opened_in_last_week))
-    print("Open P1 tasks: %d" % len(p1))
-    print("Open P2 tasks: %d" % len(p2))
-    print("Open P3 tasks: %d" % len(p3))
-    print("Open security tasks: %d" % len(security_tasks))
-    print("Open OTA tasks: %d" % len(ota_tasks))
-    print("Open QuickSync tasks: %d" % len(quick_sync_tasks))
-
+    return {'bugs': len(open_bugs),
+                'bugs_closed_in_last_week': len(closed_in_last_week),
+                'bugs_opened_in_last_week': len(opened_in_last_week),
+                'p1': len(p1),
+                'p2': len(p2),
+                'p3': len(p3),
+                'security': len(security_tasks),
+                'ota': len(ota_tasks),
+                'quick_sync': len(quick_sync_tasks)}
 
 if __name__ == '__main__':
     calculate_stats()
