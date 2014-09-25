@@ -44,5 +44,4 @@ if __name__ == '__main__':
     token.refresh_token = os.environ.get('GOOGLE_OAUTH_REFRESH_TOKEN')
     token.authorize(client)
 
-    # upload_today(client)
-    upload_historical(client, 7*16)
+    upload_today(client)
